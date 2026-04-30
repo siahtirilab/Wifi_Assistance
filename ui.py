@@ -28,6 +28,7 @@ class ProfileManagerWindow:
         on_settings_changed: Callable[[], None],
         on_connectivity_test_started: Callable[[], None],
         on_connectivity_test_finished: Callable[[bool], None],
+        on_widget_position_changed: Callable[[int | None, int | None], None],
     ) -> None:
         self.root = root
         self.store = store
@@ -39,6 +40,7 @@ class ProfileManagerWindow:
         self.on_settings_changed = on_settings_changed
         self.on_connectivity_test_started = on_connectivity_test_started
         self.on_connectivity_test_finished = on_connectivity_test_finished
+        self.on_widget_position_changed = on_widget_position_changed
         self.window: tb.Toplevel | None = None
         self.profiles: list[WifiProfile] = []
         self.selected_index: int | None = None
@@ -55,8 +57,8 @@ class ProfileManagerWindow:
 
         self.window = tb.Toplevel(self.root)
         self.window.title(f"{APP_NAME} - Manage Profiles")
-        self.window.geometry("940x700")
-        self.window.minsize(880, 640)
+        self.window.geometry("1040x560")
+        self.window.minsize(980, 520)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
 
         container = tb.Frame(self.window, padding=14)
@@ -79,14 +81,14 @@ class ProfileManagerWindow:
         left.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 12))
 
         columns = ("display_name", "ssid", "security_type")
-        self.tree = tb.Treeview(left, columns=columns, show="headings", height=13)
+        self.tree = tb.Treeview(left, columns=columns, show="headings", height=8)
         self.tree.heading("display_name", text="Display Name")
         self.tree.heading("ssid", text="SSID")
         self.tree.heading("security_type", text="Security")
         self.tree.column("display_name", width=150)
         self.tree.column("ssid", width=230)
         self.tree.column("security_type", width=130)
-        self.tree.pack(fill=BOTH, expand=True)
+        self.tree.pack(fill=X, expand=False)
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
 
         toolbar = tb.Frame(left)
@@ -104,8 +106,13 @@ class ProfileManagerWindow:
             side=RIGHT
         )
 
-        form = tb.Labelframe(content, text="Profile", padding=12)
-        form.pack(side=RIGHT, fill=BOTH, expand=False)
+        side_panel = tb.Frame(content)
+        side_panel.pack(side=RIGHT, fill=BOTH, expand=False)
+
+        form = tb.Labelframe(side_panel, text="Profile", padding=10)
+        form.pack(fill=X, expand=False)
+        form.columnconfigure(0, weight=1)
+        form.columnconfigure(1, weight=1)
 
         self.display_name_var = tk.StringVar()
         self.ssid_var = tk.StringVar()
@@ -113,73 +120,96 @@ class ProfileManagerWindow:
         self.security_var = tk.StringVar(value="WPA2-Personal")
         self.ping_target_var = tk.StringVar(value="siahtiri.ir")
         self.ping_timeout_var = tk.StringVar(value="250")
+        self.widget_x_var = tk.StringVar()
+        self.widget_y_var = tk.StringVar()
         self.startup_var = tk.BooleanVar(value=True)
 
-        self._field(form, "Display Name", self.display_name_var, 0)
-        self._field(form, "SSID", self.ssid_var, 1)
-        self._field(form, "Password", self.password_var, 2, show="*")
+        self._grid_field(form, "Display Name", self.display_name_var, 0, 0)
+        self._grid_field(form, "SSID", self.ssid_var, 0, 1)
+        self._grid_field(form, "Password", self.password_var, 1, 0, show="*")
 
-        tb.Label(form, text="Security Type").grid(row=6, column=0, sticky="w", pady=(10, 2))
+        tb.Label(form, text="Security Type").grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(6, 2))
         security = tb.Combobox(
             form,
             textvariable=self.security_var,
             values=("WPA2-Personal", "WPA3-Personal"),
             state="readonly",
-            width=28,
+            width=18,
         )
-        security.grid(row=7, column=0, sticky="ew")
+        security.grid(row=3, column=1, sticky="ew", padx=(8, 0))
 
-        tb.Label(form, text="Available Wi-Fi").grid(row=8, column=0, sticky="w", pady=(14, 2))
+        tb.Label(form, text="Available Wi-Fi").grid(row=2, column=0, sticky="w", pady=(6, 2))
         self.network_var = tk.StringVar()
-        self.network_combo = tb.Combobox(form, textvariable=self.network_var, values=(), width=28)
-        self.network_combo.grid(row=9, column=0, sticky="ew")
+        self.network_combo = tb.Combobox(form, textvariable=self.network_var, values=(), width=18)
+        self.network_combo.grid(row=3, column=0, sticky="ew")
         self.network_combo.bind("<<ComboboxSelected>>", self.on_network_selected)
 
         self.form_message_var = tk.StringVar(value="")
         tb.Label(form, textvariable=self.form_message_var, bootstyle="secondary").grid(
-            row=10, column=0, sticky="w", pady=(8, 0)
+            row=4, column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
 
-        settings = tb.Labelframe(form, text="Settings", padding=10)
-        settings.grid(row=11, column=0, sticky="ew", pady=(14, 0))
+        settings = tb.Labelframe(side_panel, text="Settings", padding=10)
+        settings.pack(fill=X, expand=False, pady=(10, 0))
+        settings.columnconfigure(0, weight=1)
+        settings.columnconfigure(1, weight=1)
 
         tb.Label(settings, text="Ping Target").grid(row=0, column=0, sticky="w", pady=(0, 2))
-        tb.Entry(settings, textvariable=self.ping_target_var, width=28).grid(
-            row=1, column=0, sticky="ew"
+        tb.Entry(settings, textvariable=self.ping_target_var, width=18).grid(
+            row=1, column=0, sticky="ew", padx=(0, 8)
         )
         tb.Label(settings, text="Ping Timeout (seconds)").grid(
-            row=2, column=0, sticky="w", pady=(10, 2)
+            row=0, column=1, sticky="w", pady=(0, 2)
         )
-        tb.Entry(settings, textvariable=self.ping_timeout_var, width=28).grid(
-            row=3, column=0, sticky="ew"
+        tb.Entry(settings, textvariable=self.ping_timeout_var, width=18).grid(
+            row=1, column=1, sticky="ew"
         )
         tb.Checkbutton(
             settings,
             text="Start with Windows",
             variable=self.startup_var,
             bootstyle="round-toggle",
-        ).grid(row=4, column=0, sticky="w", pady=(10, 0))
+        ).grid(row=2, column=0, sticky="w", pady=(10, 0))
+        position_frame = tb.Frame(settings)
+        position_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        position_frame.columnconfigure(0, weight=1)
+        position_frame.columnconfigure(1, weight=1)
+        position_frame.columnconfigure(2, weight=1)
+        tb.Label(position_frame, text="Widget X").grid(row=0, column=0, sticky="w")
+        tb.Label(position_frame, text="Widget Y").grid(row=0, column=1, sticky="w", padx=(8, 0))
+        tb.Entry(position_frame, textvariable=self.widget_x_var, width=10).grid(
+            row=1, column=0, sticky="ew"
+        )
+        tb.Entry(position_frame, textvariable=self.widget_y_var, width=10).grid(
+            row=1, column=1, sticky="ew", padx=(8, 0)
+        )
+        tb.Button(
+            position_frame,
+            text="Apply Position",
+            bootstyle="secondary",
+            command=self.apply_widget_position,
+        ).grid(row=1, column=2, sticky="ew", padx=(8, 0))
         tb.Label(settings, text=f"Creator: {APP_CREATOR}", bootstyle="secondary").grid(
-            row=5, column=0, sticky="w", pady=(10, 0)
+            row=4, column=0, sticky="w", pady=(10, 0)
         )
         tb.Button(
             settings,
             text="Save Settings",
             bootstyle="secondary",
             command=self.save_settings,
-        ).grid(row=6, column=0, sticky="ew", pady=(10, 0))
+        ).grid(row=5, column=0, sticky="ew", pady=(10, 0), padx=(0, 8))
         tb.Button(
             settings,
             text="Test Ping",
             bootstyle="info",
             command=self.test_ping,
-        ).grid(row=7, column=0, sticky="ew", pady=(8, 0))
+        ).grid(row=5, column=1, sticky="ew", pady=(10, 0))
 
         log_frame = tb.Labelframe(left, text="Log", padding=8)
         log_frame.pack(fill=BOTH, expand=False, pady=(12, 0))
         self.log_text = tk.Text(
             log_frame,
-            height=7,
+            height=5,
             wrap="word",
             state="disabled",
             bg="#0f172a",
@@ -196,18 +226,26 @@ class ProfileManagerWindow:
         self.refresh_settings()
         self.refresh_status()
 
-    def _field(
+    def _grid_field(
         self,
         parent: tb.Frame,
         label: str,
         variable: tk.StringVar,
         row_pair: int,
+        column: int,
         show: str | None = None,
     ) -> None:
         row = row_pair * 2
-        tb.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=(0 if row == 0 else 10, 2))
-        entry = tb.Entry(parent, textvariable=variable, show=show, width=30)
-        entry.grid(row=row + 1, column=0, sticky="ew")
+        padx = (8, 0) if column else (0, 8)
+        tb.Label(parent, text=label).grid(
+            row=row,
+            column=column,
+            sticky="w",
+            padx=padx,
+            pady=(0 if row == 0 else 6, 2),
+        )
+        entry = tb.Entry(parent, textvariable=variable, show=show, width=18)
+        entry.grid(row=row + 1, column=column, sticky="ew", padx=padx)
 
     def refresh_profiles(self) -> None:
         selected_index = self.selected_index
@@ -230,10 +268,25 @@ class ProfileManagerWindow:
 
     def refresh_settings(self) -> None:
         settings = self.settings_store.load_settings()
+        changed = False
+        if (
+            settings.status_widget_x is None
+            or settings.status_widget_y is None
+            or (settings.status_widget_x <= 0 and settings.status_widget_y <= 0)
+        ):
+            settings.status_widget_x = 1800
+            settings.status_widget_y = 1000
+            changed = True
+        if changed:
+            self.settings_store.save_settings(settings)
+
         self.ping_target_var.set(settings.ping_target)
         self.ping_timeout_var.set(str(settings.ping_timeout_seconds))
+        self.widget_x_var.set(str(settings.status_widget_x))
+        self.widget_y_var.set(str(settings.status_widget_y))
         registry_enabled = self.startup_manager.is_enabled()
         self.startup_var.set(settings.start_with_windows or registry_enabled)
+        self.on_widget_position_changed(settings.status_widget_x, settings.status_widget_y)
 
     def on_tree_select(self, _event: object = None) -> None:
         selected = self.tree.selection()
@@ -329,12 +382,18 @@ class ProfileManagerWindow:
         except ValueError:
             messagebox.showerror("Save settings", "Ping timeout must be a number.", parent=self.window)
             return
+        position = self._read_widget_position()
+        if position is False:
+            return
+        widget_x, widget_y = position
 
         settings = AppSettings(
             ping_target=self.ping_target_var.get().strip() or "siahtiri.ir",
             ping_timeout_seconds=timeout_seconds,
             start_with_windows=self.startup_var.get(),
             creator=APP_CREATOR,
+            status_widget_x=widget_x,
+            status_widget_y=widget_y,
         )
         try:
             self.settings_store.save_settings(settings)
@@ -343,9 +402,46 @@ class ProfileManagerWindow:
             messagebox.showerror("Save settings", str(exc), parent=self.window)
             return
         self.form_message_var.set("Settings saved.")
+        self.on_widget_position_changed(widget_x, widget_y)
         self.add_log(
             f"Settings saved. Ping target: {settings.ping_target}, timeout: {settings.ping_timeout_seconds}s"
         )
+
+    def apply_widget_position(self) -> None:
+        if self._apply_widget_position_from_fields(show_log=True):
+            self.form_message_var.set("Widget position applied.")
+
+    def _apply_widget_position_from_fields(self, show_log: bool) -> bool:
+        position = self._read_widget_position()
+        if position is False:
+            return False
+        widget_x, widget_y = position
+        settings = self.settings_store.load_settings()
+        settings.status_widget_x = widget_x
+        settings.status_widget_y = widget_y
+        try:
+            self.settings_store.save_settings(settings)
+        except Exception as exc:
+            messagebox.showerror("Apply position", str(exc), parent=self.window)
+            return False
+        self.on_widget_position_changed(widget_x, widget_y)
+        if show_log:
+            self.add_log(f"Widget position applied: x={widget_x}, y={widget_y}")
+        return True
+
+    def _read_widget_position(self) -> tuple[int | None, int | None] | bool:
+        raw_x = self.widget_x_var.get().strip()
+        raw_y = self.widget_y_var.get().strip()
+        if not raw_x and not raw_y:
+            return None, None
+        if not raw_x or not raw_y:
+            messagebox.showerror("Widget position", "Enter both Widget X and Widget Y.", parent=self.window)
+            return False
+        try:
+            return int(raw_x), int(raw_y)
+        except ValueError:
+            messagebox.showerror("Widget position", "Widget X and Widget Y must be numbers.", parent=self.window)
+            return False
 
     def test_ping(self) -> None:
         target = self.ping_target_var.get().strip() or "siahtiri.ir"
@@ -400,6 +496,8 @@ class ProfileManagerWindow:
                 self.display_name_var.set(ssid)
 
     def close(self) -> None:
+        if not self._apply_widget_position_from_fields(show_log=False):
+            return
         if self.window and self.window.winfo_exists():
             self.window.withdraw()
 

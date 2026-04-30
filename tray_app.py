@@ -18,6 +18,8 @@ from wifi_manager import WifiManager, WifiStatus
 
 
 class TrayApp:
+    STATUS_REFRESH_MS = 15000
+
     def __init__(self) -> None:
         self.store = ProfileStore()
         self.settings_store = SettingsStore()
@@ -33,18 +35,26 @@ class TrayApp:
         self.current_status = WifiStatus(False, message="Checking status...")
         self.connecting_to: str | None = None
         self.refresh_in_progress = False
-        self.status_widget = StatusWidget(self.root)
+        self.profiles_cache = self._load_profiles()
+        self.last_menu_signature: tuple | None = None
+        widget_position = self._saved_widget_position()
+        self.status_widget = StatusWidget(
+            self.root,
+            initial_position=widget_position,
+            on_position_changed=self.save_widget_position,
+        )
         self.profile_window = ProfileManagerWindow(
             self.root,
             self.store,
             self.settings_store,
             self.startup_manager,
             self.wifi,
-            self.refresh_menu,
+            self.reload_profiles,
             self.get_status_label,
             self.on_settings_changed,
             self.start_connectivity_indicator,
             self.finish_connectivity_indicator,
+            self.apply_widget_position,
         )
 
         self.icon = pystray.Icon(
@@ -57,7 +67,7 @@ class TrayApp:
     def run(self) -> None:
         self.status_widget.show()
         self.refresh_status_async()
-        self.root.after(5000, self._status_refresh_loop)
+        self.root.after(self.STATUS_REFRESH_MS, self._status_refresh_loop)
         self.icon.run_detached()
         self.root.mainloop()
 
@@ -66,11 +76,17 @@ class TrayApp:
 
     def _menu_items(self) -> list[MenuItem]:
         items: list[MenuItem] = [
+            MenuItem(
+                "Open Settings",
+                self._tk_callback(self.show_manage_profiles),
+                default=True,
+                visible=False,
+            ),
             MenuItem(self.get_status_label(), None, enabled=False),
             Menu.SEPARATOR,
         ]
 
-        profiles = self._safe_profiles()
+        profiles = self.profiles_cache
         if profiles:
             for profile in profiles:
                 active = self._is_active_profile(profile)
@@ -103,7 +119,7 @@ class TrayApp:
         )
         return items
 
-    def _safe_profiles(self) -> list[WifiProfile]:
+    def _load_profiles(self) -> list[WifiProfile]:
         try:
             return self.store.load_profiles()
         except Exception:
@@ -139,6 +155,11 @@ class TrayApp:
             status = self.wifi.connect(profile)
             self._set_status(status)
             self.root.after(0, self._log, f"Connected Wi-Fi status confirmed: {status.ssid}")
+            self.root.after(
+                0,
+                self._log,
+                f"Starting ping check: target={self.settings.ping_target}, timeout={self.settings.ping_timeout_seconds}s",
+            )
             result = self.wifi.check_connectivity(
                 self.settings.ping_target,
                 self.settings.ping_timeout_seconds,
@@ -172,7 +193,7 @@ class TrayApp:
     def _status_refresh_loop(self) -> None:
         if not self.connecting_to:
             self.refresh_status_async()
-        self.root.after(5000, self._status_refresh_loop)
+        self.root.after(self.STATUS_REFRESH_MS, self._status_refresh_loop)
 
     def _set_status(self, status: WifiStatus) -> None:
         with self.status_lock:
@@ -185,14 +206,23 @@ class TrayApp:
             return self.current_status.label
 
     def refresh_menu(self) -> None:
+        label = self.get_status_label()
+        menu_signature = (
+            label,
+            self.connecting_to,
+            self.status_widget.visible,
+            tuple((p.display_name, p.ssid, p.security_type) for p in self.profiles_cache),
+        )
         try:
-            self.icon.menu = self._build_menu()
-            self.icon.update_menu()
-            self.icon.title = self.get_status_label()
+            if menu_signature != self.last_menu_signature:
+                self.icon.menu = self._build_menu()
+                self.icon.update_menu()
+                self.last_menu_signature = menu_signature
+            self.icon.title = label
         except Exception:
             pass
 
-        self.status_widget.set_text(self.get_status_label())
+        self.status_widget.set_text(label)
 
         if self.profile_window.window and self.profile_window.window.winfo_exists():
             try:
@@ -207,9 +237,46 @@ class TrayApp:
         self.status_widget.toggle()
         self.refresh_menu()
 
+    def reload_profiles(self) -> None:
+        self.profiles_cache = self._load_profiles()
+        self.last_menu_signature = None
+        self.refresh_menu()
+
     def on_settings_changed(self) -> None:
         self.settings = self.settings_store.load_settings()
+        if (
+            self.settings.status_widget_x is None
+            or self.settings.status_widget_y is None
+            or (self.settings.status_widget_x <= 0 and self.settings.status_widget_y <= 0)
+        ):
+            self.settings.status_widget_x = 1800
+            self.settings.status_widget_y = 1000
+            self.settings_store.save_settings(self.settings)
         self._apply_startup_setting(show_errors=True)
+        self.apply_widget_position(
+            self.settings.status_widget_x,
+            self.settings.status_widget_y,
+        )
+
+    def _saved_widget_position(self) -> tuple[int, int] | None:
+        if self.settings.status_widget_x is None or self.settings.status_widget_y is None:
+            return None
+        if self.settings.status_widget_x <= 0 and self.settings.status_widget_y <= 0:
+            return None
+        return self.settings.status_widget_x, self.settings.status_widget_y
+
+    def save_widget_position(self, x: int, y: int) -> None:
+        self.settings.status_widget_x = x
+        self.settings.status_widget_y = y
+        try:
+            self.settings_store.save_settings(self.settings)
+        except Exception as exc:
+            self._log(f"Could not save widget position: {exc}")
+
+    def apply_widget_position(self, x: int | None, y: int | None) -> None:
+        if x is None or y is None:
+            return
+        self.status_widget.set_position(x, y)
 
     def start_connectivity_indicator(self) -> None:
         self.status_widget.start_blink()

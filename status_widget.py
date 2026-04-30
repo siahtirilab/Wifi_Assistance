@@ -1,27 +1,42 @@
 from __future__ import annotations
 
+import ctypes
 import tkinter as tk
+from ctypes import wintypes
+from typing import Callable
+
+
+SPI_GETWORKAREA = 0x0030
+EDGE_MARGIN = 0
+RIGHT_OFFSET = 6
+TOPMOST_REFRESH_MS = 10000
 
 
 class StatusWidget:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(
+        self,
+        root: tk.Tk,
+        initial_position: tuple[int, int] | None = None,
+        on_position_changed: Callable[[int, int], None] | None = None,
+    ) -> None:
         self.root = root
         self.window: tk.Toplevel | None = None
+        self.initial_position = initial_position
+        self.on_position_changed = on_position_changed
         self.label_var = tk.StringVar(value="Wi-Fi: checking...")
         self.dot: tk.Canvas | None = None
         self.dot_id: int | None = None
         self.blinking = False
         self._blink_job: str | None = None
+        self._topmost_job: str | None = None
         self._blink_on = False
         self.visible = True
-        self._drag_x = 0
-        self._drag_y = 0
 
     def show(self) -> None:
         if self.window and self.window.winfo_exists():
             self.window.deiconify()
             self.visible = True
-            self.position_near_taskbar()
+            self.restore_position()
             return
 
         self.window = tk.Toplevel(self.root)
@@ -31,7 +46,7 @@ class StatusWidget:
         self.window.resizable(False, False)
         self.window.protocol("WM_DELETE_WINDOW", self.hide)
 
-        frame = tk.Frame(self.window, bg="#111827", padx=8, pady=4)
+        frame = tk.Frame(self.window, bg="#111827", padx=10, pady=6)
         frame.pack(fill="both", expand=True)
 
         dot = tk.Canvas(frame, width=8, height=8, bg="#111827", highlightthickness=0)
@@ -50,15 +65,15 @@ class StatusWidget:
         label.pack(side="left")
 
         for widget in (self.window, frame, dot, label):
-            widget.bind("<ButtonPress-1>", self._start_drag)
-            widget.bind("<B1-Motion>", self._drag)
             widget.bind("<Button-3>", lambda _event: self.hide())
 
         self.visible = True
-        self.position_near_taskbar()
+        self.restore_position()
+        self._ensure_topmost()
 
     def hide(self) -> None:
         self.visible = False
+        self._cancel_topmost_job()
         if self.window and self.window.winfo_exists():
             self.window.withdraw()
 
@@ -83,6 +98,7 @@ class StatusWidget:
         if self.window and self.window.winfo_exists() and self.visible:
             self.window.update_idletasks()
             self._keep_on_screen()
+            self._ensure_topmost()
 
     def set_online(self, online: bool | None) -> None:
         self.stop_blink()
@@ -119,32 +135,81 @@ class StatusWidget:
         self.window.update_idletasks()
         width = self.window.winfo_reqwidth()
         height = self.window.winfo_reqheight()
-        screen_width = self.window.winfo_screenwidth()
-        screen_height = self.window.winfo_screenheight()
-        x = max(0, screen_width - width - 110)
-        y = max(0, screen_height - height - 42)
+        left, top, right, bottom = self._work_area()
+        x = max(left, right - width - RIGHT_OFFSET)
+        y = max(top, bottom - height - EDGE_MARGIN)
         self.window.geometry(f"+{x}+{y}")
+        self._ensure_topmost()
+
+    def restore_position(self) -> None:
+        if not self.window:
+            return
+        self.window.update_idletasks()
+        if self.initial_position is None:
+            self.position_near_taskbar()
+            return
+        x, y = self.initial_position
+        if x <= 0 and y <= 0:
+            self.position_near_taskbar()
+            return
+        x, y = self._clamped_position(x, y)
+        self.window.geometry(f"+{x}+{y}")
+        self._ensure_topmost()
+
+    def set_position(self, x: int, y: int) -> None:
+        self.initial_position = (x, y)
+        if not self.window or not self.window.winfo_exists():
+            return
+        self.window.update_idletasks()
+        x, y = self._clamped_position(x, y)
+        self.initial_position = (x, y)
+        self.window.geometry(f"+{x}+{y}")
+        self._ensure_topmost()
+
+    def _work_area(self) -> tuple[int, int, int, int]:
+        rect = wintypes.RECT()
+        ok = ctypes.windll.user32.SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            ctypes.byref(rect),
+            0,
+        )
+        if ok:
+            return rect.left, rect.top, rect.right, rect.bottom
+        return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+
+    def _ensure_topmost(self) -> None:
+        if not self.window or not self.window.winfo_exists() or not self.visible:
+            return
+        try:
+            self.window.attributes("-topmost", True)
+            self.window.lift()
+        except tk.TclError:
+            return
+        self._cancel_topmost_job()
+        self._topmost_job = self.root.after(TOPMOST_REFRESH_MS, self._ensure_topmost)
+
+    def _cancel_topmost_job(self) -> None:
+        if self._topmost_job:
+            try:
+                self.root.after_cancel(self._topmost_job)
+            except tk.TclError:
+                pass
+            self._topmost_job = None
 
     def _keep_on_screen(self) -> None:
         if not self.window:
             return
-        x = self.window.winfo_x()
-        y = self.window.winfo_y()
-        width = self.window.winfo_width()
-        height = self.window.winfo_height()
-        screen_width = self.window.winfo_screenwidth()
-        screen_height = self.window.winfo_screenheight()
-        x = min(max(0, x), max(0, screen_width - width))
-        y = min(max(0, y), max(0, screen_height - height))
+        x, y = self._clamped_position(self.window.winfo_x(), self.window.winfo_y())
         self.window.geometry(f"+{x}+{y}")
 
-    def _start_drag(self, event: tk.Event) -> None:
-        self._drag_x = event.x
-        self._drag_y = event.y
-
-    def _drag(self, event: tk.Event) -> None:
+    def _clamped_position(self, x: int, y: int) -> tuple[int, int]:
         if not self.window:
-            return
-        x = self.window.winfo_x() + event.x - self._drag_x
-        y = self.window.winfo_y() + event.y - self._drag_y
-        self.window.geometry(f"+{x}+{y}")
+            return x, y
+        self.window.update_idletasks()
+        width = self.window.winfo_width() or self.window.winfo_reqwidth()
+        height = self.window.winfo_height() or self.window.winfo_reqheight()
+        left, top, right, bottom = self._work_area()
+        x = min(max(left, x), max(left, right - width))
+        y = min(max(top, y), max(top, bottom - height))
+        return x, y

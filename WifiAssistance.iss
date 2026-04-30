@@ -1,5 +1,5 @@
 #define MyAppName "Wifi Assistance"
-#define MyAppVersion "1"
+#define MyAppVersion "2"
 #define MyAppPublisher "Siahtiri.ir"
 #define MyAppExeName "WifiAssistance.exe"
 

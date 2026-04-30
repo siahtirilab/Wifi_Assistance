@@ -228,7 +228,7 @@ class WifiManager:
         if not host:
             return ConnectivityResult(target=target, host="", online=False, details=["No ping target set."])
 
-        timeout_seconds = max(1, min(int(timeout_seconds), 300))
+        timeout_seconds = max(1, min(int(timeout_seconds), 600))
         details = [f"Target: {target}", f"Host: {host}", f"Ping timeout: {timeout_seconds}s"]
         ping_ok, ping_details = self._ping_host(host, timeout_seconds)
         details.extend(ping_details)
@@ -241,6 +241,7 @@ class WifiManager:
 
     def _ping_host(self, host: str, timeout_seconds: int) -> tuple[bool, list[str]]:
         timeout_ms = timeout_seconds * 1000
+        started = time.monotonic()
         try:
             completed = subprocess.run(
                 ["ping", "-n", "1", "-w", str(timeout_ms), host],
@@ -252,16 +253,22 @@ class WifiManager:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except subprocess.TimeoutExpired:
-            return False, [f"Ping timed out after {timeout_seconds} seconds."]
+            elapsed = time.monotonic() - started
+            return False, [
+                f"Ping timed out after {timeout_seconds} seconds.",
+                f"Ping elapsed: {elapsed:.1f}s",
+            ]
         except OSError as exc:
             return False, [f"Ping failed to start: {exc}"]
 
+        elapsed = time.monotonic() - started
         output = (completed.stdout or "") + (completed.stderr or "")
         summary = " ".join(line.strip() for line in output.splitlines() if line.strip())
         if len(summary) > 260:
             summary = summary[:257] + "..."
         return completed.returncode == 0, [
             f"Ping exit code: {completed.returncode}",
+            f"Ping elapsed: {elapsed:.1f}s",
             f"Ping output: {summary or '(empty)'}",
         ]
 

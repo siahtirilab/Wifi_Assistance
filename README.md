@@ -1,6 +1,6 @@
 # Wifi Assistance
 
-نسخه: 1  
+نسخه: 2  
 سازنده: Siahtiri.ir
 
 **Wifi Assistance** یک نرم‌افزار سبک ویندوزی برای مدیریت سریع اتصال به Wi-Fi است. برنامه در System Tray اجرا می‌شود، وضعیت واقعی اتصال فعلی را از ویندوز می‌خواند، و به شما اجازه می‌دهد بین پروفایل‌های Wi-Fi ذخیره‌شده سریع جابه‌جا شوید.
@@ -135,7 +135,7 @@ installer\WifiAssistanceSetup.exe
 
 # Wifi Assistance
 
-Version: 1  
+Version: 2  
 Creator: Siahtiri.ir
 
 **Wifi Assistance** is a lightweight Windows utility for quickly managing Wi-Fi connections. The app runs in the System Tray, reads the real current connection status from Windows, and lets you quickly switch between saved Wi-Fi profiles.

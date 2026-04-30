@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import winreg
 from dataclasses import asdict, dataclass
@@ -21,17 +22,26 @@ class AppSettings:
     ping_timeout_seconds: int = 250
     start_with_windows: bool = True
     creator: str = APP_CREATOR
+    status_widget_x: int | None = 1800
+    status_widget_y: int | None = 1000
 
     @classmethod
     def from_dict(cls, data: dict) -> "AppSettings":
         timeout = data.get("ping_timeout_seconds", 250) or 250
         if int(timeout) == 45:
             timeout = 250
+        widget_x = cls._optional_int(data.get("status_widget_x"), 1800)
+        widget_y = cls._optional_int(data.get("status_widget_y"), 1000)
+        if (widget_x is None or widget_x <= 0) and (widget_y is None or widget_y <= 0):
+            widget_x = 1800
+            widget_y = 1000
         return cls(
             ping_target=str(data.get("ping_target", "siahtiri.ir")).strip() or "siahtiri.ir",
             ping_timeout_seconds=int(timeout),
             start_with_windows=bool(data.get("start_with_windows", True)),
             creator=str(data.get("creator", APP_CREATOR)).strip() or APP_CREATOR,
+            status_widget_x=widget_x,
+            status_widget_y=widget_y,
         )
 
     def validate(self) -> None:
@@ -39,6 +49,15 @@ class AppSettings:
             raise ValueError("Ping target is required.")
         if self.ping_timeout_seconds < 1 or self.ping_timeout_seconds > 600:
             raise ValueError("Ping timeout must be between 1 and 600 seconds.")
+
+    @staticmethod
+    def _optional_int(value: object, default: int | None = None) -> int | None:
+        if value is None or value == "":
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
 
 class SettingsStore:
@@ -50,16 +69,39 @@ class SettingsStore:
 
     def load_settings(self) -> AppSettings:
         try:
-            with self.path.open("r", encoding="utf-8") as file:
-                raw = json.load(file)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Settings file is not valid JSON: {self.path}") from exc
+            raw = self._read_json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            backup_path = self.path.with_suffix(".invalid.json")
+            try:
+                shutil.copy2(self.path, backup_path)
+            except OSError:
+                pass
+            settings = AppSettings()
+            self.save_settings(settings)
+            return settings
         except OSError as exc:
             raise RuntimeError(f"Could not read settings file: {exc}") from exc
 
         if not isinstance(raw, dict):
-            raise RuntimeError("Settings file must contain an object.")
-        return AppSettings.from_dict(raw)
+            settings = AppSettings()
+            self.save_settings(settings)
+            return settings
+
+        settings = AppSettings.from_dict(raw)
+        self.save_settings(settings)
+        return settings
+
+    def _read_json(self) -> object:
+        last_error: Exception | None = None
+        for encoding in ("utf-8", "utf-8-sig", "utf-16"):
+            try:
+                with self.path.open("r", encoding=encoding) as file:
+                    return json.load(file)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
+        raise json.JSONDecodeError("Could not parse settings JSON.", "", 0)
 
     def save_settings(self, settings: AppSettings) -> None:
         settings.validate()
