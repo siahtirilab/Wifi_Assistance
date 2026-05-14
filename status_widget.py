@@ -87,12 +87,17 @@ class StatusWidget:
         compact = text.replace("Connected: ", "")
         if compact.startswith("Connecting to "):
             label = compact
+        elif "Windows denied access" in compact:
+            label = "Wi-Fi: Access denied"
         elif compact == "Disconnected":
             label = "Wi-Fi: Disconnected"
         elif compact:
             label = f"Wi-Fi: {compact}"
         else:
             label = "Wi-Fi: Unknown"
+
+        if len(label) > 36:
+            label = label[:33] + "..."
 
         self.label_var.set(label)
         if self.window and self.window.winfo_exists() and self.visible:

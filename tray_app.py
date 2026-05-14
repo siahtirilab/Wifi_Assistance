@@ -197,7 +197,19 @@ class TrayApp:
 
     def _set_status(self, status: WifiStatus) -> None:
         with self.status_lock:
+            if self._is_transient_status_error(status) and self.current_status.connected:
+                return
             self.current_status = status
+
+    def _is_transient_status_error(self, status: WifiStatus) -> bool:
+        if status.connected:
+            return False
+        message = status.message.lower()
+        return (
+            "access denied" in message
+            or "could not run netsh" in message
+            or "timed out" in message
+        )
 
     def get_status_label(self) -> str:
         if self.connecting_to:

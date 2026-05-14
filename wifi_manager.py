@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
 import socket
@@ -119,6 +120,9 @@ class WifiManager:
         try:
             output = self.run_netsh(["wlan", "show", "interfaces"], timeout=12)
         except WifiError as exc:
+            fallback = self._get_status_from_powershell()
+            if fallback.connected:
+                return fallback
             return WifiStatus(False, message=str(exc))
 
         blocks = self._interface_blocks(output)
@@ -146,6 +150,57 @@ class WifiManager:
                 best_status = status
 
         return best_status
+
+    def _get_status_from_powershell(self) -> WifiStatus:
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            (
+                "Get-NetConnectionProfile | "
+                "Where-Object { $_.InterfaceAlias -like '*Wi-Fi*' -or $_.InterfaceAlias -like '*Wireless*' } | "
+                "Select-Object -First 1 Name,InterfaceAlias,IPv4Connectivity | "
+                "ConvertTo-Json -Compress"
+            ),
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return WifiStatus(False, message="Disconnected")
+
+        if completed.returncode != 0 or not completed.stdout.strip():
+            return WifiStatus(False, message="Disconnected")
+
+        try:
+            data = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            return WifiStatus(False, message="Disconnected")
+
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        if not isinstance(data, dict):
+            return WifiStatus(False, message="Disconnected")
+
+        ssid = str(data.get("Name", "")).strip()
+        interface_name = str(data.get("InterfaceAlias", "")).strip()
+        connectivity = str(data.get("IPv4Connectivity", "")).strip()
+        if ssid and ssid.lower() != "unidentified network":
+            return WifiStatus(
+                connected=True,
+                ssid=ssid,
+                interface_name=interface_name,
+                state=connectivity or "Connected",
+                message="",
+            )
+        return WifiStatus(False, interface_name=interface_name, state=connectivity, message="Disconnected")
 
     def ensure_profile(self, profile: WifiProfile) -> None:
         if self.profile_exists(profile.ssid):
@@ -290,15 +345,20 @@ class WifiManager:
         if not interface_name:
             raise WifiError("No Wi-Fi adapter was found to restart.")
 
-        self.run_netsh(
-            ["interface", "set", "interface", f'name="{interface_name}"', "admin=disabled"],
-            timeout=20,
-        )
-        time.sleep(2)
-        self.run_netsh(
-            ["interface", "set", "interface", f'name="{interface_name}"', "admin=enabled"],
-            timeout=20,
-        )
+        try:
+            self.run_netsh(
+                ["interface", "set", "interface", f'name="{interface_name}"', "admin=disabled"],
+                timeout=20,
+            )
+            time.sleep(2)
+            self.run_netsh(
+                ["interface", "set", "interface", f'name="{interface_name}"', "admin=enabled"],
+                timeout=20,
+            )
+        except WifiError as exc:
+            if "access" in str(exc).lower():
+                raise WifiError("Restart Adapter requires administrator permission.") from exc
+            raise
 
     def _first_wireless_interface_name(self) -> str:
         output = self.run_netsh(["wlan", "show", "interfaces"], timeout=12)
@@ -417,12 +477,14 @@ class WifiManager:
     def _friendly_netsh_error(self, output: str) -> str:
         text = output.strip() or "Unknown netsh error."
         lowered = text.lower()
+        if "location permission" in lowered or "location services" in lowered:
+            return "Enable Windows Location services for Wi-Fi details."
         if "wireless autoconfig service" in lowered or "wlansvc" in lowered:
             return "WLAN AutoConfig service is not running."
         if "no wireless interface" in lowered or "wireless interface" in lowered:
             return "No Wi-Fi adapter was found or it is disabled."
         if "access is denied" in lowered or "administrator" in lowered:
-            return "Windows denied access. Restarting an adapter may require administrator permission."
+            return "Windows denied access to Wi-Fi status."
         if "network specified by profile" in lowered or "not available" in lowered:
             return "The requested SSID was not found nearby."
         if "parameter is incorrect" in lowered:
